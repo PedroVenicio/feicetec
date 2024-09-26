@@ -1,0 +1,244 @@
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include "HX711.h"
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define DOUT 32
+#define SCK 33
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64 
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+HX711 scale;
+
+const char *ssid = "Pedro";
+const char *password = "1233217777";
+
+WebServer server(80);
+
+// Variáveis para armazenar dados do usuário
+String nome = "";
+float altura = 0.0;
+float idade = 0.0;
+String genero = "";
+String objetivo = "";
+
+// Função que retorna o peso
+float peso() {
+    return scale.get_units(10) - 1.20; // Leitura média de 10 leituras
+}
+
+// Função que calcula a Taxa Metabólica Basal (TMB)
+float calcularTMB(float peso, float altura, float idade, String genero) {
+    if (genero == "masculino") {
+        return 88.36 + (13.4 * peso) + (4.8 * altura * 100) - (5.7 * idade); // Homens
+    } else {
+        return 447.6 + (9.2 * peso) + (3.1 * altura * 100) - (4.3 * idade);  // Mulheres
+    }
+}
+
+// Função que calcula as calorias com base no objetivo
+int calcularCalorias(float tmb, String objetivo) {
+    int caloriasBase = tmb * 1.55; // Atividade física moderada
+    if (objetivo == "manter") {
+        return caloriasBase;
+    } else if (objetivo == "ganhar") {
+        return caloriasBase + 500; // Ganhar peso
+    } else if (objetivo == "perder") {
+        return caloriasBase - 500; // Perder peso
+    }
+    return caloriasBase;
+}
+
+// Função que manipula a página principal
+void handleRoot() {
+  char msg[4000];
+
+  float pesoAtual = peso();
+  float tmb = calcularTMB(pesoAtual, altura, idade, genero);
+  int calorias = calcularCalorias(tmb, objetivo);
+
+  snprintf(msg, 4000,
+           "<html>\
+   <head>\
+    <meta name='viewport' content='width=device-width, initial-scale=1'>\
+    <link rel='stylesheet' href='https://use.fontawesome.com/releases/v5.7.2/css/all.css'>\
+    <title>Balance Smart PRO</title>\
+    <style>\
+      body { font-family: 'Roboto', sans-serif; background-color: #f0f0f0; color: #333; margin: 0; padding: 0; text-align: center; }\
+      h2 { font-size: 2.5rem; color: #4CAF50; margin-top: 20px; }\
+      .container { background: #ffffff; padding: 30px; margin: 20px auto; max-width: 800px; border-radius: 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.2); }\
+      .icon { font-size: 5rem; color: #4CAF50; }\
+      .weight { font-size: 3rem; margin-top: 10px; color: #555; }\
+      .units { font-size: 1.5rem; color: #888; }\
+      form { margin-top: 20px; }\
+      input[type='text'], input[type='number'] {\
+        display: block;\
+        width: calc(100% - 20px);\
+        padding: 15px;\
+        margin: 10px auto;\
+        font-size: 1rem;\
+        border: 1px solid #ccc;\
+        border-radius: 5px;\
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);\
+      }\
+      input[type='submit'] {\
+        background-color: #4CAF50;\
+        color: #fff;\
+        padding: 15px 25px;\
+        font-size: 1.2rem;\
+        border: none;\
+        border-radius: 5px;\
+        cursor: pointer;\
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);\
+        transition: background-color 0.3s;\
+      }\
+      input[type='submit']:hover { background-color: #45a049; }\
+      .footer { font-size: 1rem; color: #666; margin-top: 20px; }\
+      .footer a { color: #4CAF50; text-decoration: none; }\
+      .radio-group { text-align: center; margin-top: 20px; }\
+      .radio-group label { display: inline-block; margin: 10px; }\
+      .weight { font-size: 2rem; margin-top: 10px; }\
+      .info { margin-top: 20px; text-align: center; }\
+      .info p { margin: 5px 0; }\
+    </style>\
+    <script>\
+      function updatePeso() {\
+        fetch('/peso')\
+          .then(response => response.json())\
+          .then(data => {\
+            document.getElementById('pesoAtual').textContent = data.peso.toFixed(2) + ' kg';\
+          });\
+      }\
+      setInterval(updatePeso, 2000); // Atualiza o peso a cada 2 segundos\
+      window.onload = updatePeso;\
+    </script>\
+  </head>\
+  <body>\
+    <div class='container'>\
+      <h2>Balance Smart PRO</h2>\
+      <i class='fas fa-balance-scale icon'></i>\
+      <p id='pesoAtual' class='weight'>%.2f <span class='units'>kg</span></p>\
+      <form method='GET' action='/save'>\
+        <input type='text' name='nome' placeholder='Seu nome' required><br>\
+        <input type='number' name='altura' step='0.01' placeholder='Sua altura (m)' required><br>\
+        <input type='number' name='idade' placeholder='Sua idade' required><br>\
+        <div class='radio-group'>\
+          <label><input type='radio' name='genero' value='masculino' required> Masculino</label>\
+          <label><input type='radio' name='genero' value='feminino'> Feminino</label>\
+        </div>\
+        <div class='radio-group'>\
+          <label><input type='radio' name='objetivo' value='manter' required> Manter Peso</label>\
+          <label><input type='radio' name='objetivo' value='ganhar'> Ganhar Peso</label>\
+          <label><input type='radio' name='objetivo' value='perder'> Perder Peso</label>\
+        </div>\
+        <input type='submit' value='Enviar'>\
+      </form>\
+      <div class='info'>\
+        <p>Nome: %s</p>\
+        <p>Altura: %.2f m</p>\
+        <p>Idade: %.1f anos</p>\
+        <p>Gênero: %s</p>\
+        <p>Objetivo: %s</p>\
+        <p>Calorias recomendadas: %d kcal</p>\
+      </div>\
+    </div>\
+    <div class='footer'>\
+      <p>Powered by ESP32 & HX711</p>\
+    </div>\
+  </body>\
+</html>", pesoAtual, nome.c_str(), altura, idade, genero.c_str(), objetivo.c_str(), calorias
+          );
+  server.send(200, "text/html", msg);
+}
+
+// Função que manipula a página de peso
+void handlePeso() {
+  float pesoAtual = peso();
+  String pesoStr = String(pesoAtual);
+  server.send(200, "application/json", "{\"peso\":" + pesoStr + "}");
+}
+
+// Função que salva os dados do formulário
+void handleSave() {
+  nome = server.arg("nome");
+  altura = server.arg("altura").toFloat();
+  idade = server.arg("idade").toFloat();
+  genero = server.arg("genero");
+  objetivo = server.arg("objetivo");
+  
+  // Redireciona de volta para a página principal
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+void setup(void) {
+  Serial.begin(115200);
+  Serial.println("Balança HX711 com ESP32");
+
+  scale.begin(DOUT, SCK);
+  scale.set_offset(1779); 
+  scale.set_scale(-17604.61);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.println("");
+
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin("esp32")) {
+    Serial.println("MDNS responder started");
+  }
+
+  // Rotas do servidor
+  server.on("/", handleRoot);
+  server.on("/save", handleSave);
+
+  server.begin();
+  Serial.println("balança server started");
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  display.clearDisplay();
+
+  display.setTextSize(3);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 30);
+}
+
+void loop(void) {
+  server.handleClient();
+  float pesoAtual = peso();
+  if (pesoAtual <= 0){
+    pesoAtual = 0;
+  }
+  if (pesoAtual < 5){
+    pesoAtual = 0;
+  }
+  else{
+    pesoAtual += 6;
+  }
+  String pesoStr = String(pesoAtual, 2);
+  display.clearDisplay();
+  display.setTextSize(3);
+  display.setCursor(0, 30);
+  display.println(pesoStr + "kg");
+  display.display(); 
+  delay(2); // allow the CPU to switch to other tasks
+}
