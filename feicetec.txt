@@ -1,3 +1,9 @@
+//display: SCK 22; SDA 21
+//E+ = vermelho
+//E- = preto
+//A- = branco
+//A+ = verde
+
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WebServer.h>
